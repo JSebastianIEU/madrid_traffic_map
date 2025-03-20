@@ -105,33 +105,75 @@ async function loadData() {
     }
 }
 
-// Updated loadMarkers with icon error handling
+// Modify the loadMarkers function to add markers in batches
 function loadMarkers(data) {
-    L.geoJSON(data, {
-        pointToLayer: (feature, latlng) => {
-            const iconName = feature.properties.category.toLowerCase().replace(' ', '-');
-            const iconUrl = `${CONFIG.BASE_URL}icons/${iconName}.png`;
-            
-            const icon = L.icon({
-                iconUrl: iconUrl,
-                iconSize: CONFIG.ICON_SIZE,
-                error: () => {
-                    showError(`Missing icon for ${feature.properties.category}`);
-                    // Fallback to default marker
-                    return L.divIcon({
-                        className: 'custom-marker',
-                        html: '📍',
-                        iconSize: [30, 30]
-                    });
-                }
-            });
+    markersCluster.clearLayers(); // Clear existing layers
+    
+    // Process in batches
+    const batchSize = 1000;
+    let index = 0;
+    
+    function addBatch() {
+        const batch = data.slice(index, index + batchSize);
+        const geoJsonLayer = L.geoJSON(batch, {
+            pointToLayer: (feature, latlng) => {
+                const iconName = feature.properties.category.toLowerCase().replace(' ', '-');
+                const iconUrl = `${CONFIG.BASE_URL}icons/${iconName}.png`;
+                
+                const icon = L.icon({
+                    iconUrl: iconUrl,
+                    iconSize: CONFIG.ICON_SIZE,
+                    error: () => {
+                        return L.divIcon({
+                            className: 'custom-marker',
+                            html: '📍',
+                            iconSize: [30, 30]
+                        });
+                    }
+                });
 
-            const marker = L.marker(latlng, { icon });
-            marker.bindPopup(createPopupContent(feature.properties));
-            return marker;
+                const marker = L.marker(latlng, { icon });
+                marker.bindPopup(createPopupContent(feature.properties));
+                return marker;
+            }
+        });
+        
+        markersCluster.addLayer(geoJsonLayer);
+        index += batchSize;
+        
+        if(index < data.length) {
+            setTimeout(addBatch, 50);
         }
-    }).addTo(markersCluster);
+    }
+    
+    addBatch();
 }
+
+// Add debounce to filter handling
+let filterTimeout;
+function handleFilterChange() {
+    clearTimeout(filterTimeout);
+    filterTimeout = setTimeout(() => {
+        activeFilters.categories = new Set(
+            Array.from(document.querySelectorAll('[data-category]:checked'))
+                .map(cb => cb.dataset.category)
+        );
+        
+        activeFilters.districts = new Set(
+            Array.from(document.querySelectorAll('[data-district]:checked'))
+                .map(cb => cb.dataset.district)
+        );
+
+        activeFilters.neighborhoods = new Set(
+            Array.from(document.querySelectorAll('[data-neighborhood]:checked'))
+                .map(cb => cb.dataset.neighborhood)
+        );
+
+        updateVisibility();
+        updateStatistics();
+    }, 100);
+}
+
 // Filter System
 function initFilters(data) {
     console.log('Initializing filters with data:', data);
@@ -204,21 +246,33 @@ function handleFilterChange() {
     updateStatistics();
 }
 
+// Modify updateVisibility to use requestAnimationFrame
 function updateVisibility() {
-    let visibleCount = 0;
+    let layers = [];
+    markersCluster.eachLayer(layer => layers.push(layer));
     
-    markersCluster.eachLayer(marker => {
-        const props = marker.feature.properties;
-        const visible = activeFilters.categories.has(props.category) &&
-                      activeFilters.districts.has(props.district) &&
-                      activeFilters.neighborhoods.has(props.neighborhood);
+    let index = 0;
+    
+    function processLayer() {
+        for(let i = 0; i < 100; i++) {
+            if(index >= layers.length) return;
+            
+            const layer = layers[index];
+            const props = layer.feature.properties;
+            const visible = activeFilters.categories.has(props.category) &&
+                          activeFilters.districts.has(props.district) &&
+                          activeFilters.neighborhoods.has(props.neighborhood);
+            
+            layer.setOpacity(visible ? 1 : 0);
+            layer.setStyle({ fillOpacity: visible ? 1 : 0 });
+            
+            index++;
+        }
         
-        if (visible) visibleCount++;
-        marker.setOpacity(visible ? 1 : 0);
-        marker.setStyle({ fillOpacity: visible ? 1 : 0 });
-    });
-
-    console.log(`Visible markers: ${visibleCount}`);
+        requestAnimationFrame(processLayer);
+    }
+    
+    processLayer();
 }
 
 // Statistics System
