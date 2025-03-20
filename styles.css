@@ -1,14 +1,8 @@
-
-/* Base Styles */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
     font-family: 'Nunito', sans-serif;
-}
-
-body {
-    background: #f0f2f5;
 }
 
 #map {
@@ -17,13 +11,12 @@ body {
     z-index: 1;
 }
 
-/* Control Panel */
 .control-panel {
     position: fixed;
     top: 20px;
     right: 20px;
     width: 320px;
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.98);
     border-radius: 12px;
     box-shadow: 0 4px 24px rgba(0,0,0,0.1);
     backdrop-filter: blur(8px);
@@ -55,7 +48,6 @@ body {
     overflow-y: auto;
 }
 
-/* Filter Groups */
 .filter-group {
     margin-bottom: 1.5rem;
 }
@@ -86,7 +78,6 @@ body {
     accent-color: #0984e3;
 }
 
-/* District Colors */
 .district-color {
     display: inline-block;
     width: 16px;
@@ -96,29 +87,27 @@ body {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-/* Statistics */
 .stats-container {
     margin-top: 1.5rem;
     padding-top: 1.5rem;
     border-top: 1px solid rgba(0,0,0,0.1);
 }
 
-.stats-item {
+.stats-grid {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.stat-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 8px 12px;
-    margin: 4px 0;
     background: rgba(0,0,0,0.03);
     border-radius: 6px;
 }
 
-.stat-item span:first-child {
-    flex-grow: 1;
-    margin-right: 1rem;
-}
-
-/* Popup Styling */
 .leaflet-popup-content {
     font-size: 0.9rem;
     min-width: 200px;
@@ -129,7 +118,11 @@ body {
     margin-bottom: 0.5rem;
 }
 
-.leaflet-popup-content p {
-    margin: 0.25rem 0;
-    color: #636e72;
+.marker-cluster {
+    background: rgba(110, 204, 57, 0.6) !important;
+}
+
+.marker-cluster div {
+    background: rgba(110, 204, 57, 0.6) !important;
+    color: white !important;
 }

@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Madrid Traffic Infrastructure Map</title>
+    <title>Madrid Infrastructure Map</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="styles.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css">
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div id="map"></div>
@@ -24,104 +24,15 @@
             </div>
             <div class="stats-container">
                 <h3>Statistics</h3>
-                <div class="stats-item" id="total-count">Loading data...</div>
+                <div class="stats-item" id="total-count"></div>
+                <div class="stats-grid" id="category-counts"></div>
+                <div class="stats-grid" id="district-counts"></div>
             </div>
         </div>
     </div>
-
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
-
-    <script>
-    // GitHub raw content base URL
-    const BASE_URL = 'https://raw.githubusercontent.com/JSebastianIEU/madrid_traffic_map/main/'
-    
-    // Map initialization
-    const map = L.map('map').setView([40.4168, -3.7038], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-    // Marker cluster group
-    const markers = L.markerClusterGroup({
-        chunkedLoading: true,
-        chunkInterval: 100
-    });
-    map.addLayer(markers);
-
-    // Data configuration
-    const datasets = {
-        'Traffic Lights': 'trafic.csv',
-        'Streetlights': 'lamps.csv',
-        'Acoustic Signals': 'acustic.csv'
-    };
-
-    // Load and process data
-    async function loadData() {
-        let allData = [];
-        
-        for (const [category, file] of Object.entries(datasets)) {
-            const response = await fetch(`${BASE_URL}${file}`);
-            const csvData = await response.text();
-            
-            const results = Papa.parse(csvData, {
-                header: true,
-                dynamicTyping: true,
-                skipEmptyLines: true
-            });
-            
-            const features = results.data.map(row => ({
-                type: 'Feature',
-                geometry: {
-                    type: 'Point',
-                    coordinates: [row.Longitude, row.Latitude]
-                },
-                properties: {
-                    category: category,
-                    district: row.district || 'Unknown',
-                    type: row.type || 'N/A',
-                    installation_date: row.installation_date || 'Unknown'
-                }
-            }));
-            
-            allData = allData.concat(features);
-        }
-
-        // Add markers to map
-        L.geoJSON(allData, {
-            pointToLayer: (feature, latlng) => {
-                return L.marker(latlng, {
-                    icon: L.icon({
-                        iconUrl: `${BASE_URL}icons/${feature.properties.category.toLowerCase().replace(' ', '-')}.png`,
-                        iconSize: [28, 28]
-                    })
-                }).bindPopup(this.createPopupContent(feature.properties));
-            }
-        }).addTo(markers);
-
-        // Initialize filters and stats
-        this.initializeFilters();
-        this.updateStatistics();
-    }
-
-    function createPopupContent(properties) {
-        return `
-            <div class="popup-content">
-                <h4>${properties.category}</h4>
-                <p>District: ${properties.district}</p>
-                ${properties.type ? `<p>Type: ${properties.type}</p>` : ''}
-                ${properties.installation_date ? `<p>Installed: ${properties.installation_date}</p>` : ''}
-            </div>
-        `;
-    }
-
-    // Rest of the JavaScript functions (filters, stats) remain similar
-    // but need to be adapted to work with the marker cluster group
-    
-    // Initialize the map
-    loadData().catch(error => {
-        console.error('Error loading data:', error);
-        document.getElementById('total-count').textContent = 'Error loading data';
-    });
-    </script>
+    <script src="app.js"></script>
 </body>
 </html>
