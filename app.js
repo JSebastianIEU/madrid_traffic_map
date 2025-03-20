@@ -33,7 +33,7 @@ function initMap() {
     map.addLayer(markersCluster);
 }
 
-// Data Loading
+// Data Loading (updated)
 async function loadData() {
     try {
         const datasets = {
@@ -45,31 +45,62 @@ async function loadData() {
         const allData = [];
         
         for (const [category, file] of Object.entries(datasets)) {
-            const response = await fetch(`${CONFIG.BASE_URL}${file}`);
-            if (!response.ok) throw new Error(`Failed to load ${file}`);
+            const url = `${CONFIG.BASE_URL}${file}`;
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                throw new Error(`Failed to load ${file} (HTTP ${response.status})`);
+            }
+            
             const csvData = await response.text();
             
             const results = Papa.parse(csvData, {
                 header: true,
                 dynamicTyping: true,
-                skipEmptyLines: true
+                skipEmptyLines: true,
+                error: (error) => {
+                    throw new Error(`CSV parse error in ${file}: ${error.message}`);
+                }
             });
             
-            const features = results.data.map(row => ({
-                type: 'Feature',
-                geometry: {
-                    type: 'Point',
-                    coordinates: [row.Longitude, row.Latitude]
-                },
-                properties: {
+            const features = results.data.map(row => {
+                // Handle different column structures
+                const baseProps = {
                     category: category,
-                    district: row.district || 'Unknown',
-                    neighborhood: category === 'Streetlights' ? (row.neighborhood || 'Unknown') : 'N/A',
-                    type: row.type || 'N/A',
-                    id: row.id || 'N/A',
-                    address: category === 'Streetlights' ? (row.address || 'N/A') : undefined
-                }
-            }));
+                    district: row.district || 'Unknown'
+                };
+
+                // Category-specific properties
+                const specificProps = {
+                    'Acoustic Signals': {
+                        type: row.type,
+                        id: row.id
+                    },
+                    'Streetlights': {
+                        type: row.type,
+                        neighborhood: row.neighborhood,
+                        address: row.address
+                    },
+                    'Traffic Lights': {
+                        id: row.id
+                    }
+                }[category];
+
+                return {
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [
+                            Number(row.Longitude || row.longitude),
+                            Number(row.Latitude || row.latitude)
+                        ]
+                    },
+                    properties: {
+                        ...baseProps,
+                        ...specificProps
+                    }
+                };
+            });
             
             allData.push(...features);
         }
@@ -78,19 +109,30 @@ async function loadData() {
         initFilters(allData);
         updateStatistics();
     } catch (error) {
-        showError('Error loading data. Please try again later.');
+        showError(error.message);
         console.error('Error:', error);
     }
 }
 
-// Markers Management
+// Updated loadMarkers with icon error handling
 function loadMarkers(data) {
     L.geoJSON(data, {
         pointToLayer: (feature, latlng) => {
+            const iconName = feature.properties.category.toLowerCase().replace(' ', '-');
+            const iconUrl = `${CONFIG.BASE_URL}icons/${iconName}.png`;
+            
             const icon = L.icon({
-                iconUrl: `${CONFIG.BASE_URL}icons/${feature.properties.category.toLowerCase().replace(' ', '-')}.png`,
+                iconUrl: iconUrl,
                 iconSize: CONFIG.ICON_SIZE,
-                error: () => showError(`Icon missing for ${feature.properties.category}`)
+                error: () => {
+                    showError(`Missing icon for ${feature.properties.category}`);
+                    // Fallback to default marker
+                    return L.divIcon({
+                        className: 'custom-marker',
+                        html: '📍',
+                        iconSize: [30, 30]
+                    });
+                }
             });
 
             const marker = L.marker(latlng, { icon });
@@ -99,7 +141,6 @@ function loadMarkers(data) {
         }
     }).addTo(markersCluster);
 }
-
 // Filter System
 function initFilters(data) {
     const categories = new Set(['Traffic Lights', 'Streetlights', 'Acoustic Signals']);
