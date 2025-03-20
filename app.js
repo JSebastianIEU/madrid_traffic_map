@@ -4,7 +4,8 @@ const CONFIG = {
     MAX_ZOOM: 20,
     INITIAL_ZOOM: 14,
     ICON_SIZE: [28, 28],
-    BATCH_SIZE: 500
+    BATCH_SIZE: 500,
+    BATCH_DELAY: 50
 };
 
 // State
@@ -15,49 +16,67 @@ let activeFilters = {
     districts: new Set(),
     neighborhoods: new Set()
 };
+let loadingState = {
+    total: 0,
+    loaded: 0,
+    currentDataset: ''
+};
+
+// Loading Screen Control
+function updateLoadingState() {
+    const progress = (loadingState.loaded / loadingState.total) * 100;
+    document.querySelector('.progress-bar').style.width = `${progress}%`;
+    document.querySelector('.dataset-status').textContent = 
+        `Loading ${loadingState.currentDataset}: ${loadingState.loaded}/${loadingState.total}`;
+}
 
 // Map Initialization
-function initMap() {
+async function initMap() {
+    updateLoadingScreen('Initializing map...');
     map = L.map('map', {
         maxZoom: CONFIG.MAX_ZOOM,
         minZoom: 10
     }).setView([40.4168, -3.7038], CONFIG.INITIAL_ZOOM);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
     markersCluster = L.markerClusterGroup({
         chunkedLoading: true,
-        chunkInterval: 100
+        chunkInterval: 100,
+        disableClusteringAtZoom: 16
     });
     map.addLayer(markersCluster);
 }
 
-// Optimized Data Loading
+// Data Loading
 async function loadData() {
     try {
         const datasets = [
-            {
+            { 
                 name: 'Traffic Lights',
                 file: 'trafic.csv',
-                coordColumns: ['Longitude', 'Latitude']
+                fields: ['type', 'district', 'id', 'id_cruce', 'Longitude', 'Latitude']
             },
             {
                 name: 'Streetlights',
                 file: 'lamps.csv',
-                coordColumns: ['Longitude', 'Latitude'] // Original CSV has Latitude,Longitude but we'll fix
+                fields: ['type', 'district', 'neighborhood', 'Latitude', 'Longitude', 'address']
             },
             {
                 name: 'Acoustic Signals',
                 file: 'acustic.csv',
-                coordColumns: ['Longitude', 'Latitude']
+                fields: ['type', 'district', 'id', 'id_cruce', 'Longitude', 'Latitude']
             }
         ];
 
         let allData = [];
         
         for (const dataset of datasets) {
+            loadingState.currentDataset = dataset.name;
+            updateLoadingScreen(`Loading ${dataset.name} data...`);
+            
             const url = `${CONFIG.BASE_URL}${dataset.file}`;
             const response = await fetch(url);
             if (!response.ok) throw new Error(`Failed to load ${dataset.file}`);
@@ -69,104 +88,119 @@ async function loadData() {
                 skipEmptyLines: true
             });
 
+            loadingState.total = results.data.length;
+            loadingState.loaded = 0;
+            updateLoadingState();
+
             const features = [];
             for (const row of results.data) {
-                // Handle coordinate columns based on dataset
-                let lng, lat;
-                if (dataset.file === 'lamps.csv') {
-                    // Special case for lamps.csv column order
-                    lng = parseFloat(row.Longitude);
-                    lat = parseFloat(row.Latitude);
-                } else {
-                    lng = parseFloat(row.Longitude);
-                    lat = parseFloat(row.Latitude);
-                }
+                const coords = parseCoordinates(row, dataset);
+                if (!coords) continue;
 
-                if (isNaN(lng)) lng = row.Longitude ? parseFloat(row.Longitude.replace(',', '.')) : null;
-                if (isNaN(lat)) lat = row.Latitude ? parseFloat(row.Latitude.replace(',', '.')) : null;
-
-                if (!lng || !lat) {
-                    console.warn('Invalid coordinates in row:', row);
-                    continue;
-                }
-
-                const properties = {
-                    category: dataset.name,
-                    district: row.district || 'Unknown',
-                    neighborhood: dataset.name === 'Streetlights' ? row.neighborhood : 'N/A',
-                    type: row.type || 'N/A',
-                    id: row.id || 'N/A',
-                    address: dataset.name === 'Streetlights' ? row.address : 'N/A'
-                };
-
-                features.push({
-                    type: 'Feature',
-                    geometry: {
-                        type: 'Point',
-                        coordinates: [lng, lat]
-                    },
-                    properties
-                });
+                features.push(createFeature(row, dataset, coords));
+                loadingState.loaded++;
+                if (features.length % 100 === 0) updateLoadingState();
             }
-            
-            // Add features in batches
-            for (let i = 0; i < features.length; i += CONFIG.BATCH_SIZE) {
-                const batch = features.slice(i, i + CONFIG.BATCH_SIZE);
-                allData = allData.concat(batch);
-                await new Promise(resolve => setTimeout(resolve, 0));
-            }
+
+            // Add features in optimized batches
+            await addFeaturesInBatches(features);
+            allData = allData.concat(features);
         }
 
-        loadMarkers(allData);
         initFilters(allData);
         updateStatistics();
+        document.querySelector('.loading-overlay').classList.add('hidden');
     } catch (error) {
         showError(error.message);
         console.error('Error:', error);
     }
 }
-// Optimized loadMarkers
-function loadMarkers(data) {
-    markersCluster.clearLayers();
-    
-    const iconCache = {};
-    let index = 0;
-    
-    const processBatch = () => {
-        const batch = data.slice(index, index + CONFIG.BATCH_SIZE);
-        
-        const geoJsonLayer = L.geoJSON(batch, {
-            pointToLayer: (feature, latlng) => {
-                const category = feature.properties.category;
-                if (!iconCache[category]) {
-                    iconCache[category] = L.icon({
-                        iconUrl: `${CONFIG.BASE_URL}icons/${category.toLowerCase().replace(' ', '-')}.png`,
-                        iconSize: CONFIG.ICON_SIZE,
-                        error: () => L.divIcon({
-                            className: 'custom-marker',
-                            html: '📍',
-                            iconSize: [30, 30]
-                        })
-                    });
-                }
-                
-                const marker = L.marker(latlng, { icon: iconCache[category] });
-                marker.bindPopup(createPopupContent(feature.properties));
-                return marker;
-            }
-        });
-        
-        markersCluster.addLayer(geoJsonLayer);
-        index += CONFIG.BATCH_SIZE;
-        
-        if (index < data.length) {
-            setTimeout(processBatch, 50);
+
+function parseCoordinates(row, dataset) {
+    try {
+        let lng, lat;
+        const coordKeys = {
+            'Streetlights': ['Longitude', 'Latitude'],
+            'Traffic Lights': ['Longitude', 'Latitude'],
+            'Acoustic Signals': ['Longitude', 'Latitude']
+        };
+
+        const [lngKey, latKey] = coordKeys[dataset.name];
+        lng = parseCoordinateValue(row[lngKey]);
+        lat = parseCoordinateValue(row[latKey]);
+
+        if (!lng || !lat || isNaN(lng) || isNaN(lat)) {
+            console.warn('Invalid coordinates:', row);
+            return null;
         }
-    };
-    
-    processBatch();
+
+        return [lng, lat];
+    } catch (error) {
+        console.warn('Coordinate parsing error:', error);
+        return null;
+    }
 }
 
+function parseCoordinateValue(value) {
+    if (typeof value === 'string') {
+        // Handle comma decimal separators
+        return parseFloat(value.replace(',', '.').trim());
+    }
+    return parseFloat(value);
+}
+
+function createFeature(row, dataset, coords) {
+    return {
+        type: 'Feature',
+        geometry: {
+            type: 'Point',
+            coordinates: coords
+        },
+        properties: {
+            category: dataset.name,
+            district: row.district || 'Unknown',
+            neighborhood: dataset.name === 'Streetlights' ? row.neighborhood : 'N/A',
+            type: row.type || 'N/A',
+            id: row.id || 'N/A',
+            address: dataset.name === 'Streetlights' ? row.address : 'N/A'
+        }
+    };
+}
+
+async function addFeaturesInBatches(features) {
+    const iconCache = {};
+    let processed = 0;
+    
+    while (processed < features.length) {
+        const batch = features.slice(processed, processed + CONFIG.BATCH_SIZE);
+        const markers = batch.map(feature => {
+            const category = feature.properties.category;
+            if (!iconCache[category]) {
+                iconCache[category] = L.icon({
+                    iconUrl: `${CONFIG.BASE_URL}icons/${category.toLowerCase().replace(' ', '-')}.png`,
+                    iconSize: CONFIG.ICON_SIZE,
+                    error: () => L.divIcon({
+                        className: 'custom-marker',
+                        html: '📍',
+                        iconSize: [30, 30]
+                    })
+                });
+            }
+            const marker = L.marker(feature.geometry.coordinates, { 
+                icon: iconCache[category] 
+            });
+            marker.bindPopup(createPopupContent(feature.properties));
+            return marker;
+        });
+        
+        markersCluster.addLayers(markers);
+        processed += batch.length;
+        loadingState.loaded += batch.length;
+        updateLoadingState();
+        
+        await new Promise(resolve => setTimeout(resolve, CONFIG.BATCH_DELAY));
+    }
+}
 
 // Add debounce to filter handling
 let filterTimeout;
@@ -188,9 +222,11 @@ function handleFilterChange() {
                 .map(cb => cb.dataset.neighborhood)
         );
 
-        updateVisibility();
-        updateStatistics();
-    }, 100);
+        requestAnimationFrame(() => {
+            updateVisibility();
+            updateStatistics();
+        });
+    }, 200); // Increased debounce time
 }
 
 // Filter System
@@ -198,26 +234,15 @@ function initFilters(data) {
     console.log('Initializing filters with data:', data);
     
     // Collect unique values
-    const categories = new Set(data.map(f => f.properties.category));
-    const districts = new Set(data.map(f => f.properties.district));
-    const neighborhoods = new Set(data.map(f => f.properties.neighborhood));
+    const categories = [...new Set(data.map(f => f.properties.category))];
+    const districts = [...new Set(data.map(f => f.properties.district))];
+    const neighborhoods = [...new Set(data.map(f => f.properties.neighborhood))];
 
     console.log('Filter options:', { categories, districts, neighborhoods });
 
-    // Create filters
-    const createFilters = (containerId, values, type) => {
-        const container = document.getElementById(containerId);
-        container.innerHTML = '';
-        values.forEach(value => {
-            if (value && value !== 'Unknown') {
-                container.appendChild(createCheckbox(value, type));
-            }
-        });
-    };
-
-    createFilters('category-filters', categories, 'category');
-    createFilters('district-filters', districts, 'district');
-    createFilters('neighborhood-filters', neighborhoods, 'neighborhood');
+    populateFilters('category-filters', categories, 'category');
+    populateFilters('district-filters', districts, 'district');
+    populateFilters('neighborhood-filters', neighborhoods, 'neighborhood');
 
     // Set initial active filters
     activeFilters.categories = new Set(categories);
@@ -227,6 +252,19 @@ function initFilters(data) {
     console.log('Active filters initialized:', activeFilters);
 }
 
+function populateFilters(containerId, values, type) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = values
+        .filter(v => v && v !== 'Unknown')
+        .map(value => `
+            <div class="filter-item">
+                <label>
+                    <input type="checkbox" data-${type}="${value}" checked>
+                    ${value}
+                </label>
+            </div>
+        `).join('');
+}
 function createCheckbox(value, type) {
     const container = document.createElement('div');
     container.className = 'filter-item';
@@ -370,7 +408,7 @@ function showError(message) {
 }
 
 // Initialize Application
-document.addEventListener('DOMContentLoaded', () => {
-    initMap();
-    loadData();
+document.addEventListener('DOMContentLoaded', async () => {
+    await initMap();
+    await loadData();
 });
