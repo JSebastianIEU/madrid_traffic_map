@@ -3,7 +3,8 @@ const CONFIG = {
     BASE_URL: 'https://raw.githubusercontent.com/JSebastianIEU/madrid_traffic_map/main/',
     MAX_ZOOM: 20,
     INITIAL_ZOOM: 14,
-    ICON_SIZE: [28, 28]
+    ICON_SIZE: [28, 28],
+    BATCH_SIZE: 500
 };
 
 // State
@@ -33,69 +34,89 @@ function initMap() {
     map.addLayer(markersCluster);
 }
 
-// Data Loading (updated)
+// Optimized Data Loading
 async function loadData() {
     try {
-        const datasets = {
-            'Traffic Lights': 'trafic.csv',
-            'Streetlights': 'lamps.csv',
-            'Acoustic Signals': 'acustic.csv'
-        };
+        const datasets = [
+            {
+                name: 'Traffic Lights',
+                file: 'trafic.csv',
+                coordColumns: ['Longitude', 'Latitude']
+            },
+            {
+                name: 'Streetlights',
+                file: 'lamps.csv',
+                coordColumns: ['Longitude', 'Latitude'] // Original CSV has Latitude,Longitude but we'll fix
+            },
+            {
+                name: 'Acoustic Signals',
+                file: 'acustic.csv',
+                coordColumns: ['Longitude', 'Latitude']
+            }
+        ];
 
-        const allData = [];
+        let allData = [];
         
-        for (const [category, file] of Object.entries(datasets)) {
-            const url = `${CONFIG.BASE_URL}${file}`;
-            console.log(`Fetching ${url}`);
-            
+        for (const dataset of datasets) {
+            const url = `${CONFIG.BASE_URL}${dataset.file}`;
             const response = await fetch(url);
-            if (!response.ok) throw new Error(`Failed to load ${file}: ${response.status}`);
+            if (!response.ok) throw new Error(`Failed to load ${dataset.file}`);
             
             const csvData = await response.text();
-            console.log(`Received data for ${file}:`, csvData.slice(0, 200)); // Log first 200 chars
-            
             const results = Papa.parse(csvData, {
                 header: true,
                 dynamicTyping: true,
                 skipEmptyLines: true
             });
-            
-            console.log(`Parsed ${file}:`, results.data.slice(0, 3)); // Log first 3 rows
 
-            const features = results.data.map(row => {
-                // Handle different coordinate column names
-                const lng = row.Longitude || row.longitude;
-                const lat = row.Latitude || row.latitude;
-                
-                if (!lng || !lat) {
-                    console.warn('Missing coordinates in row:', row);
-                    return null;
+            const features = [];
+            for (const row of results.data) {
+                // Handle coordinate columns based on dataset
+                let lng, lat;
+                if (dataset.file === 'lamps.csv') {
+                    // Special case for lamps.csv column order
+                    lng = parseFloat(row.Longitude);
+                    lat = parseFloat(row.Latitude);
+                } else {
+                    lng = parseFloat(row.Longitude);
+                    lat = parseFloat(row.Latitude);
                 }
 
-                const props = {
-                    category: category,
+                if (isNaN(lng)) lng = row.Longitude ? parseFloat(row.Longitude.replace(',', '.')) : null;
+                if (isNaN(lat)) lat = row.Latitude ? parseFloat(row.Latitude.replace(',', '.')) : null;
+
+                if (!lng || !lat) {
+                    console.warn('Invalid coordinates in row:', row);
+                    continue;
+                }
+
+                const properties = {
+                    category: dataset.name,
                     district: row.district || 'Unknown',
-                    neighborhood: row.neighborhood || 'Unknown',
+                    neighborhood: dataset.name === 'Streetlights' ? row.neighborhood : 'N/A',
                     type: row.type || 'N/A',
                     id: row.id || 'N/A',
-                    address: row.address || 'N/A'
+                    address: dataset.name === 'Streetlights' ? row.address : 'N/A'
                 };
 
-                return {
+                features.push({
                     type: 'Feature',
                     geometry: {
                         type: 'Point',
-                        coordinates: [Number(lng), Number(lat)]
+                        coordinates: [lng, lat]
                     },
-                    properties: props
-                };
-            }).filter(Boolean);
-
-            console.log(`Processed features for ${file}:`, features.slice(0, 3));
-            allData.push(...features);
+                    properties
+                });
+            }
+            
+            // Add features in batches
+            for (let i = 0; i < features.length; i += CONFIG.BATCH_SIZE) {
+                const batch = features.slice(i, i + CONFIG.BATCH_SIZE);
+                allData = allData.concat(batch);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
         }
 
-        console.log('All data loaded:', allData);
         loadMarkers(allData);
         initFilters(allData);
         updateStatistics();
@@ -104,50 +125,48 @@ async function loadData() {
         console.error('Error:', error);
     }
 }
-
-// Modify the loadMarkers function to add markers in batches
+// Optimized loadMarkers
 function loadMarkers(data) {
-    markersCluster.clearLayers(); // Clear existing layers
+    markersCluster.clearLayers();
     
-    // Process in batches
-    const batchSize = 1000;
+    const iconCache = {};
     let index = 0;
     
-    function addBatch() {
-        const batch = data.slice(index, index + batchSize);
+    const processBatch = () => {
+        const batch = data.slice(index, index + CONFIG.BATCH_SIZE);
+        
         const geoJsonLayer = L.geoJSON(batch, {
             pointToLayer: (feature, latlng) => {
-                const iconName = feature.properties.category.toLowerCase().replace(' ', '-');
-                const iconUrl = `${CONFIG.BASE_URL}icons/${iconName}.png`;
-                
-                const icon = L.icon({
-                    iconUrl: iconUrl,
-                    iconSize: CONFIG.ICON_SIZE,
-                    error: () => {
-                        return L.divIcon({
+                const category = feature.properties.category;
+                if (!iconCache[category]) {
+                    iconCache[category] = L.icon({
+                        iconUrl: `${CONFIG.BASE_URL}icons/${category.toLowerCase().replace(' ', '-')}.png`,
+                        iconSize: CONFIG.ICON_SIZE,
+                        error: () => L.divIcon({
                             className: 'custom-marker',
                             html: '📍',
                             iconSize: [30, 30]
-                        });
-                    }
-                });
-
-                const marker = L.marker(latlng, { icon });
+                        })
+                    });
+                }
+                
+                const marker = L.marker(latlng, { icon: iconCache[category] });
                 marker.bindPopup(createPopupContent(feature.properties));
                 return marker;
             }
         });
         
         markersCluster.addLayer(geoJsonLayer);
-        index += batchSize;
+        index += CONFIG.BATCH_SIZE;
         
-        if(index < data.length) {
-            setTimeout(addBatch, 50);
+        if (index < data.length) {
+            setTimeout(processBatch, 50);
         }
-    }
+    };
     
-    addBatch();
+    processBatch();
 }
+
 
 // Add debounce to filter handling
 let filterTimeout;
