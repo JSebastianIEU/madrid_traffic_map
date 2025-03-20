@@ -29,28 +29,43 @@ let loadingState = {
 
 // Map Initialization
 async function initMap() {
-    updateLoadingScreen('Initializing map...');
-    map = L.map('map', {
-        maxZoom: CONFIG.MAX_ZOOM,
-        minZoom: 12
-    }).setView([40.4168, -3.7038], CONFIG.INITIAL_ZOOM);
+    try {
+        console.log("Inicializando mapa...");
+        updateLoadingScreen('Initializing map...');
+        
+        // Verificar que Leaflet está cargado
+        if (!L || !L.map) {
+            throw new Error("Leaflet no se cargó correctamente");
+        }
 
-    // Base map layer without labels
-    baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
-        attribution: '© OpenStreetMap'
-    }).addTo(map);
+        map = L.map('map', {
+            maxZoom: CONFIG.MAX_ZOOM,
+            minZoom: 12
+        }).setView([40.4168, -3.7038], CONFIG.INITIAL_ZOOM);
 
-    // POI Layer with labels
-    poiLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap'
-    });
+        console.log("Mapa creado, añadiendo capas...");
+        
+        // Capa base
+        baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
 
-    markersCluster = L.markerClusterGroup({
-        chunkedLoading: true,
-        chunkInterval: 100,
-        disableClusteringAtZoom: 16
-    });
-    map.addLayer(markersCluster);
+        // Capa de POIs
+        poiLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+        
+        // Cluster de marcadores
+        markersCluster = L.markerClusterGroup({
+            chunkedLoading: true,
+            chunkInterval: 100
+        });
+        map.addLayer(markersCluster);
+
+        console.log("Mapa inicializado correctamente");
+    } catch (error) {
+        console.error("Error en initMap:", error);
+        showError(`Error al inicializar el mapa: ${error.message}`);
+        throw error; // Propagar el error
+    }
 }
 
 // Data Loading
@@ -355,6 +370,13 @@ function updateLoadingScreen(message) {
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
-    await initMap();
-    await loadData();
+    try {
+        await initMap();
+        console.log("Mapa inicializado, cargando datos...");
+        await loadData();
+    } catch (error) {
+        console.error("Error crítico:", error);
+        showError("La aplicación no pudo iniciar. Recarga la página.");
+        document.querySelector('.loading-overlay').classList.add('hidden');
+    }
 });
