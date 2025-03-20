@@ -27,6 +27,28 @@ let loadingState = {
     currentDataset: ''
 };
 
+// Loading Screen Functions
+function updateLoadingScreen(message) {
+    const loadingStatus = document.querySelector('.loading-status');
+    if (loadingStatus) {
+        loadingStatus.textContent = message;
+    }
+}
+
+function updateLoadingState() {
+    const progress = (loadingState.loaded / loadingState.total) * 100 || 0;
+    const progressBar = document.querySelector('.progress-bar');
+    const datasetStatus = document.querySelector('.dataset-status');
+    
+    if (progressBar) {
+        progressBar.style.width = `${progress}%`;
+    }
+    
+    if (datasetStatus) {
+        datasetStatus.textContent = `Loading ${loadingState.currentDataset}: ${loadingState.loaded}/${loadingState.total}`;
+    }
+}
+
 // Map Initialization
 async function initMap() {
     try {
