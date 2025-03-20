@@ -11,7 +11,8 @@ let map;
 let markersCluster;
 let activeFilters = {
     categories: new Set(),
-    districts: new Set()
+    districts: new Set(),
+    neighborhoods: new Set()
 };
 
 // Map Initialization
@@ -45,6 +46,7 @@ async function loadData() {
         
         for (const [category, file] of Object.entries(datasets)) {
             const response = await fetch(`${CONFIG.BASE_URL}${file}`);
+            if (!response.ok) throw new Error(`Failed to load ${file}`);
             const csvData = await response.text();
             
             const results = Papa.parse(csvData, {
@@ -62,8 +64,10 @@ async function loadData() {
                 properties: {
                     category: category,
                     district: row.district || 'Unknown',
+                    neighborhood: category === 'Streetlights' ? (row.neighborhood || 'Unknown') : 'N/A',
                     type: row.type || 'N/A',
-                    installation_date: row.installation_date || 'Unknown'
+                    id: row.id || 'N/A',
+                    address: category === 'Streetlights' ? (row.address || 'N/A') : undefined
                 }
             }));
             
@@ -74,7 +78,8 @@ async function loadData() {
         initFilters(allData);
         updateStatistics();
     } catch (error) {
-        console.error('Error loading data:', error);
+        showError('Error loading data. Please try again later.');
+        console.error('Error:', error);
     }
 }
 
@@ -84,7 +89,8 @@ function loadMarkers(data) {
         pointToLayer: (feature, latlng) => {
             const icon = L.icon({
                 iconUrl: `${CONFIG.BASE_URL}icons/${feature.properties.category.toLowerCase().replace(' ', '-')}.png`,
-                iconSize: CONFIG.ICON_SIZE
+                iconSize: CONFIG.ICON_SIZE,
+                error: () => showError(`Icon missing for ${feature.properties.category}`)
             });
 
             const marker = L.marker(latlng, { icon });
@@ -98,22 +104,22 @@ function loadMarkers(data) {
 function initFilters(data) {
     const categories = new Set(['Traffic Lights', 'Streetlights', 'Acoustic Signals']);
     const districts = new Set(data.map(f => f.properties.district));
+    const neighborhoods = new Set(data.map(f => f.properties.neighborhood));
 
-    // Create category filters
-    const categoryContainer = document.getElementById('category-filters');
-    categories.forEach(category => {
-        categoryContainer.appendChild(createCheckbox(category, 'category'));
-    });
+    // Create filters
+    const createFilters = (containerId, values, type) => {
+        const container = document.getElementById(containerId);
+        values.forEach(value => container.appendChild(createCheckbox(value, type)));
+    };
 
-    // Create district filters
-    const districtContainer = document.getElementById('district-filters');
-    districts.forEach(district => {
-        districtContainer.appendChild(createCheckbox(district, 'district'));
-    });
+    createFilters('category-filters', categories, 'category');
+    createFilters('district-filters', districts, 'district');
+    createFilters('neighborhood-filters', neighborhoods, 'neighborhood');
 
     // Set initial active filters
     activeFilters.categories = new Set(categories);
     activeFilters.districts = new Set(districts);
+    activeFilters.neighborhoods = new Set(neighborhoods);
 
     // Add event listeners
     document.querySelectorAll('.filter-item input').forEach(checkbox => {
@@ -130,12 +136,6 @@ function createCheckbox(value, type) {
     input.type = 'checkbox';
     input.checked = true;
     input.dataset[type] = value;
-    
-    if(type === 'district') {
-        const colorSpan = document.createElement('span');
-        colorSpan.className = 'district-color';
-        label.appendChild(colorSpan);
-    }
     
     label.appendChild(input);
     label.appendChild(document.createTextNode(value));
@@ -156,6 +156,11 @@ function handleFilterChange() {
             .map(cb => cb.dataset.district)
     );
 
+    activeFilters.neighborhoods = new Set(
+        Array.from(document.querySelectorAll('[data-neighborhood]:checked'))
+            .map(cb => cb.dataset.neighborhood)
+    );
+
     updateVisibility();
     updateStatistics();
 }
@@ -164,10 +169,11 @@ function updateVisibility() {
     markersCluster.eachLayer(marker => {
         const props = marker.feature.properties;
         const visible = activeFilters.categories.has(props.category) &&
-                      activeFilters.districts.has(props.district);
+                      activeFilters.districts.has(props.district) &&
+                      activeFilters.neighborhoods.has(props.neighborhood);
         
         marker.setOpacity(visible ? 1 : 0);
-        marker.setStyle(visible ? {fillOpacity: 1} : {fillOpacity: 0});
+        marker.setStyle({fillOpacity: visible ? 1 : 0});
     });
 }
 
@@ -205,7 +211,6 @@ function updateStatsDisplay(counts) {
     document.getElementById('district-counts').innerHTML = Array.from(counts.districts.entries())
         .map(([name, count]) => `
             <div class="stat-item">
-                <span class="district-color"></span>
                 <span>${name}</span>
                 <span>${count}</span>
             </div>
@@ -218,14 +223,33 @@ function toggleControlPanel() {
 }
 
 function createPopupContent(properties) {
-    return `
-        <div class="popup-content">
-            <h4>${properties.category}</h4>
-            <p><strong>District:</strong> ${properties.district}</p>
-            ${properties.type ? `<p><strong>Type:</strong> ${properties.type}</p>` : ''}
-            ${properties.installation_date ? `<p><strong>Installed:</strong> ${properties.installation_date}</p>` : ''}
-        </div>
-    `;
+    let content = `<h4>${properties.category}</h4>`;
+    content += `<p><strong>District:</strong> ${properties.district}</p>`;
+    
+    switch(properties.category) {
+        case 'Acoustic Signals':
+            content += `<p><strong>Type:</strong> ${properties.type}</p>`;
+            content += `<p><strong>ID:</strong> ${properties.id}</p>`;
+            break;
+        case 'Streetlights':
+            content += `<p><strong>Type:</strong> ${properties.type}</p>`;
+            content += `<p><strong>Neighborhood:</strong> ${properties.neighborhood}</p>`;
+            content += `<p><strong>Address:</strong> ${properties.address}</p>`;
+            break;
+        case 'Traffic Lights':
+            content += `<p><strong>ID:</strong> ${properties.id}</p>`;
+            break;
+    }
+    
+    return content;
+}
+
+function showError(message) {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error-message';
+    errorDiv.textContent = message;
+    document.body.appendChild(errorDiv);
+    setTimeout(() => errorDiv.remove(), 5000);
 }
 
 // Initialize Application

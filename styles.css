@@ -126,3 +126,15 @@
     background: rgba(110, 204, 57, 0.6) !important;
     color: white !important;
 }
+
+.error-message {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    padding: 15px;
+    background: #ffebee;
+    color: #b71c1c;
+    border-radius: 8px;
+    z-index: 10000;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
