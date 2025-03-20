@@ -3,14 +3,19 @@ const CONFIG = {
     BASE_URL: 'https://raw.githubusercontent.com/JSebastianIEU/madrid_traffic_map/main/',
     MAX_ZOOM: 20,
     INITIAL_ZOOM: 14,
-    ICON_SIZE: [28, 28],
     BATCH_SIZE: 500,
-    BATCH_DELAY: 50
+    BATCH_DELAY: 50,
+    COLORS: {
+        'Traffic Lights': '#ff4757',
+        'Streetlights': '#ffa502',
+        'Acoustic Signals': '#6c5ce7'
+    }
 };
 
 // State
 let map;
 let markersCluster;
+let baseLayer, poiLayer;
 let activeFilters = {
     categories: new Set(),
     districts: new Set(),
@@ -22,25 +27,23 @@ let loadingState = {
     currentDataset: ''
 };
 
-// Loading Screen Control
-function updateLoadingState() {
-    const progress = (loadingState.loaded / loadingState.total) * 100;
-    document.querySelector('.progress-bar').style.width = `${progress}%`;
-    document.querySelector('.dataset-status').textContent = 
-        `Loading ${loadingState.currentDataset}: ${loadingState.loaded}/${loadingState.total}`;
-}
-
 // Map Initialization
 async function initMap() {
     updateLoadingScreen('Initializing map...');
     map = L.map('map', {
         maxZoom: CONFIG.MAX_ZOOM,
-        minZoom: 10
+        minZoom: 12
     }).setView([40.4168, -3.7038], CONFIG.INITIAL_ZOOM);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
+    // Base map layer without labels
+    baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap'
     }).addTo(map);
+
+    // POI Layer with labels
+    poiLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap'
+    });
 
     markersCluster = L.markerClusterGroup({
         chunkedLoading: true,
@@ -57,22 +60,20 @@ async function loadData() {
             { 
                 name: 'Traffic Lights',
                 file: 'trafic.csv',
-                fields: ['type', 'district', 'id', 'id_cruce', 'Longitude', 'Latitude']
+                color: CONFIG.COLORS['Traffic Lights']
             },
             {
                 name: 'Streetlights',
                 file: 'lamps.csv',
-                fields: ['type', 'district', 'neighborhood', 'Latitude', 'Longitude', 'address']
+                color: CONFIG.COLORS['Streetlights']
             },
             {
                 name: 'Acoustic Signals',
                 file: 'acustic.csv',
-                fields: ['type', 'district', 'id', 'id_cruce', 'Longitude', 'Latitude']
+                color: CONFIG.COLORS['Acoustic Signals']
             }
         ];
 
-        let allData = [];
-        
         for (const dataset of datasets) {
             loadingState.currentDataset = dataset.name;
             updateLoadingScreen(`Loading ${dataset.name} data...`);
@@ -97,17 +98,29 @@ async function loadData() {
                 const coords = parseCoordinates(row, dataset);
                 if (!coords) continue;
 
-                features.push(createFeature(row, dataset, coords));
+                features.push({
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Point',
+                        coordinates: coords
+                    },
+                    properties: {
+                        category: dataset.name,
+                        district: row.district || 'Unknown',
+                        neighborhood: dataset.name === 'Streetlights' ? row.neighborhood : 'N/A',
+                        type: row.type || 'N/A',
+                        id: row.id || 'N/A',
+                        address: dataset.name === 'Streetlights' ? row.address : 'N/A'
+                    }
+                });
                 loadingState.loaded++;
                 if (features.length % 100 === 0) updateLoadingState();
             }
 
-            // Add features in optimized batches
-            await addFeaturesInBatches(features);
-            allData = allData.concat(features);
+            await addMarkersInBatches(features, dataset.color);
         }
 
-        initFilters(allData);
+        initFilters();
         updateStatistics();
         document.querySelector('.loading-overlay').classList.add('hidden');
     } catch (error) {
@@ -116,140 +129,76 @@ async function loadData() {
     }
 }
 
+// Coordinate Parsing
 function parseCoordinates(row, dataset) {
     try {
         let lng, lat;
-        const coordKeys = {
-            'Streetlights': ['Longitude', 'Latitude'],
-            'Traffic Lights': ['Longitude', 'Latitude'],
-            'Acoustic Signals': ['Longitude', 'Latitude']
-        };
-
-        const [lngKey, latKey] = coordKeys[dataset.name];
-        lng = parseCoordinateValue(row[lngKey]);
-        lat = parseCoordinateValue(row[latKey]);
-
-        if (!lng || !lat || isNaN(lng) || isNaN(lat)) {
-            console.warn('Invalid coordinates:', row);
-            return null;
+        if (dataset.name === 'Streetlights') {
+            lat = parseFloat(row.Latitude);
+            lng = parseFloat(row.Longitude);
+        } else {
+            lng = parseFloat(row.Longitude);
+            lat = parseFloat(row.Latitude);
         }
 
+        if (isNaN(lng)) lng = parseFloat(String(row.Longitude).replace(',', '.'));
+        if (isNaN(lat)) lat = parseFloat(String(row.Latitude).replace(',', '.'));
+
+        if (isNaN(lng) || isNaN(lat)) return null;
         return [lng, lat];
     } catch (error) {
-        console.warn('Coordinate parsing error:', error);
+        console.warn('Coordinate error:', error);
         return null;
     }
 }
 
-function parseCoordinateValue(value) {
-    if (typeof value === 'string') {
-        // Handle comma decimal separators
-        return parseFloat(value.replace(',', '.').trim());
-    }
-    return parseFloat(value);
-}
-
-function createFeature(row, dataset, coords) {
-    return {
-        type: 'Feature',
-        geometry: {
-            type: 'Point',
-            coordinates: coords
-        },
-        properties: {
-            category: dataset.name,
-            district: row.district || 'Unknown',
-            neighborhood: dataset.name === 'Streetlights' ? row.neighborhood : 'N/A',
-            type: row.type || 'N/A',
-            id: row.id || 'N/A',
-            address: dataset.name === 'Streetlights' ? row.address : 'N/A'
-        }
-    };
-}
-
-async function addFeaturesInBatches(features) {
-    const iconCache = {};
-    let processed = 0;
-    
-    while (processed < features.length) {
-        const batch = features.slice(processed, processed + CONFIG.BATCH_SIZE);
-        const markers = batch.map(feature => {
-            const category = feature.properties.category;
-            if (!iconCache[category]) {
-                iconCache[category] = L.icon({
-                    iconUrl: `${CONFIG.BASE_URL}icons/${category.toLowerCase().replace(' ', '-')}.png`,
-                    iconSize: CONFIG.ICON_SIZE,
-                    error: () => L.divIcon({
-                        className: 'custom-marker',
-                        html: '📍',
-                        iconSize: [30, 30]
-                    })
-                });
-            }
-            const marker = L.marker(feature.geometry.coordinates, { 
-                icon: iconCache[category] 
-            });
-            marker.bindPopup(createPopupContent(feature.properties));
-            return marker;
-        });
+// Marker Creation
+async function addMarkersInBatches(features, color) {
+    const batchSize = CONFIG.BATCH_SIZE;
+    for (let i = 0; i < features.length; i += batchSize) {
+        const batch = features.slice(i, i + batchSize);
+        const markers = batch.map(feature => 
+            L.circleMarker(feature.geometry.coordinates, {
+                radius: 5,
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.7
+            }).bindPopup(createPopupContent(feature.properties))
+        );
         
         markersCluster.addLayers(markers);
-        processed += batch.length;
-        loadingState.loaded += batch.length;
-        updateLoadingState();
-        
         await new Promise(resolve => setTimeout(resolve, CONFIG.BATCH_DELAY));
     }
 }
 
-// Add debounce to filter handling
-let filterTimeout;
-function handleFilterChange() {
-    clearTimeout(filterTimeout);
-    filterTimeout = setTimeout(() => {
-        activeFilters.categories = new Set(
-            Array.from(document.querySelectorAll('[data-category]:checked'))
-                .map(cb => cb.dataset.category)
-        );
-        
-        activeFilters.districts = new Set(
-            Array.from(document.querySelectorAll('[data-district]:checked'))
-                .map(cb => cb.dataset.district)
-        );
+// Filter System
+function initFilters() {
+    const districtNeighborhoods = {};
+    markersCluster.eachLayer(marker => {
+        const { district, neighborhood } = marker.feature.properties;
+        if (!districtNeighborhoods[district]) districtNeighborhoods[district] = new Set();
+        districtNeighborhoods[district].add(neighborhood);
+    });
 
-        activeFilters.neighborhoods = new Set(
-            Array.from(document.querySelectorAll('[data-neighborhood]:checked'))
-                .map(cb => cb.dataset.neighborhood)
-        );
-
-        requestAnimationFrame(() => {
-            updateVisibility();
-            updateStatistics();
-        });
-    }, 200); // Increased debounce time
+    populateFilters('district-filters', Object.keys(districtNeighborhoods), 'district', updateNeighborhoodFilters);
+    updateNeighborhoodFilters();
+    populateFilters('category-filters', ['Traffic Lights', 'Streetlights', 'Acoustic Signals'], 'category');
 }
 
-// Filter System
-function initFilters(data) {
-    console.log('Initializing filters with data:', data);
+function updateNeighborhoodFilters() {
+    const selectedDistricts = Array.from(document.querySelectorAll('[data-district]:checked'))
+        .map(cb => cb.dataset.district);
     
-    // Collect unique values
-    const categories = [...new Set(data.map(f => f.properties.category))];
-    const districts = [...new Set(data.map(f => f.properties.district))];
-    const neighborhoods = [...new Set(data.map(f => f.properties.neighborhood))];
+    const availableNeighborhoods = new Set();
+    selectedDistricts.forEach(district => {
+        markersCluster.eachLayer(marker => {
+            if (marker.feature.properties.district === district) {
+                availableNeighborhoods.add(marker.feature.properties.neighborhood);
+            }
+        });
+    });
 
-    console.log('Filter options:', { categories, districts, neighborhoods });
-
-    populateFilters('category-filters', categories, 'category');
-    populateFilters('district-filters', districts, 'district');
-    populateFilters('neighborhood-filters', neighborhoods, 'neighborhood');
-
-    // Set initial active filters
-    activeFilters.categories = new Set(categories);
-    activeFilters.districts = new Set(districts);
-    activeFilters.neighborhoods = new Set(neighborhoods);
-
-    console.log('Active filters initialized:', activeFilters);
+    populateFilters('neighborhood-filters', Array.from(availableNeighborhoods), 'neighborhood');
 }
 
 function populateFilters(containerId, values, type) {
@@ -265,137 +214,130 @@ function populateFilters(containerId, values, type) {
             </div>
         `).join('');
 }
-function createCheckbox(value, type) {
-    const container = document.createElement('div');
-    container.className = 'filter-item';
-    
-    const label = document.createElement('label');
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.checked = true;
-    input.dataset[type] = value;
-    
-    label.appendChild(input);
-    label.appendChild(document.createTextNode(value));
-    container.appendChild(label);
-    
-    return container;
-}
 
-// Filter Handlers
-function handleFilterChange() {
-    activeFilters.categories = new Set(
-        Array.from(document.querySelectorAll('[data-category]:checked'))
-            .map(cb => cb.dataset.category)
-    );
-    
-    activeFilters.districts = new Set(
-        Array.from(document.querySelectorAll('[data-district]:checked'))
-            .map(cb => cb.dataset.district)
-    );
-
-    activeFilters.neighborhoods = new Set(
-        Array.from(document.querySelectorAll('[data-neighborhood]:checked'))
-            .map(cb => cb.dataset.neighborhood)
-    );
+// Filter Application
+function applyFilters() {
+    activeFilters = {
+        categories: new Set(Array.from(document.querySelectorAll('[data-category]:checked'))
+            .map(cb => cb.dataset.category)),
+        districts: new Set(Array.from(document.querySelectorAll('[data-district]:checked'))
+            .map(cb => cb.dataset.district)),
+        neighborhoods: new Set(Array.from(document.querySelectorAll('[data-neighborhood]:checked'))
+            .map(cb => cb.dataset.neighborhood))
+    };
 
     updateVisibility();
     updateStatistics();
 }
 
-// Modify updateVisibility to use requestAnimationFrame
+// Visibility Update
 function updateVisibility() {
-    let layers = [];
-    markersCluster.eachLayer(layer => layers.push(layer));
-    
-    let index = 0;
-    
-    function processLayer() {
-        for(let i = 0; i < 100; i++) {
-            if(index >= layers.length) return;
-            
-            const layer = layers[index];
-            const props = layer.feature.properties;
-            const visible = activeFilters.categories.has(props.category) &&
-                          activeFilters.districts.has(props.district) &&
-                          activeFilters.neighborhoods.has(props.neighborhood);
-            
-            layer.setOpacity(visible ? 1 : 0);
-            layer.setStyle({ fillOpacity: visible ? 1 : 0 });
-            
-            index++;
-        }
+    markersCluster.eachLayer(marker => {
+        const { category, district, neighborhood } = marker.feature.properties;
+        const visible = activeFilters.categories.has(category) &&
+                      activeFilters.districts.has(district) &&
+                      activeFilters.neighborhoods.has(neighborhood);
         
-        requestAnimationFrame(processLayer);
-    }
-    
-    processLayer();
+        marker.setStyle({
+            opacity: visible ? 1 : 0,
+            fillOpacity: visible ? 0.7 : 0
+        });
+    });
 }
 
 // Statistics System
 function updateStatistics() {
-    const counts = {
-        total: 0,
-        categories: new Map(),
-        districts: new Map()
+    const stats = {
+        totals: { 'Traffic Lights': 0, 'Streetlights': 0, 'Acoustic Signals': 0 },
+        districts: {},
+        neighborhoods: {}
     };
 
     markersCluster.eachLayer(marker => {
-        if (marker.options.opacity === 1) {
-            const props = marker.feature.properties;
-            counts.total++;
-            counts.categories.set(props.category, (counts.categories.get(props.category) || 0) + 1);
-            counts.districts.set(props.district, (counts.districts.get(props.district) || 0) + 1);
+        if (marker.options.opacity !== 1) return;
+        const { category, district, neighborhood } = marker.feature.properties;
+        
+        // Update totals
+        stats.totals[category]++;
+        
+        // District stats
+        if (!stats.districts[district]) {
+            stats.districts[district] = { total: 0, ...stats.totals };
         }
+        stats.districts[district].total++;
+        stats.districts[district][category]++;
+        
+        // Neighborhood stats
+        if (!stats.neighborhoods[neighborhood]) {
+            stats.neighborhoods[neighborhood] = { total: 0, ...stats.totals };
+        }
+        stats.neighborhoods[neighborhood].total++;
+        stats.neighborhoods[neighborhood][category]++;
     });
 
-    updateStatsDisplay(counts);
+    updateStatsDisplay(stats);
 }
 
-function updateStatsDisplay(counts) {
-    document.getElementById('total-count').textContent = `Total Items: ${counts.total}`;
-    
-    document.getElementById('category-counts').innerHTML = Array.from(counts.categories.entries())
-        .map(([name, count]) => `
-            <div class="stat-item">
-                <span>${name}</span>
-                <span>${count}</span>
+function updateStatsDisplay(stats) {
+    const total = Object.values(stats.totals).reduce((a, b) => a + b, 0);
+    let html = `
+        <div class="stats-summary">
+            <h4>Total Selected: ${total}</h4>
+            <div class="stats-grid">
+                ${Object.entries(stats.totals).map(([cat, count]) => `
+                    <div class="stat-item" style="border-left: 4px solid ${CONFIG.COLORS[cat]}">
+                        <span>${cat}</span>
+                        <span>${count}</span>
+                    </div>
+                `).join('')}
             </div>
-        `).join('');
-    
-    document.getElementById('district-counts').innerHTML = Array.from(counts.districts.entries())
-        .map(([name, count]) => `
-            <div class="stat-item">
-                <span>${name}</span>
-                <span>${count}</span>
-            </div>
-        `).join('');
+        </div>`;
+
+    html += `<div class="district-breakdown">`;
+    for (const [district, data] of Object.entries(stats.districts)) {
+        html += `
+            <div class="district-group">
+                <h4>${district}</h4>
+                <div class="stats-grid">
+                    ${Object.entries(CONFIG.COLORS).map(([cat]) => `
+                        <div class="stat-item">
+                            <span>${cat}</span>
+                            <span>${data[cat] || 0}</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="total">Total: ${data.total}</div>
+            </div>`;
+    }
+    html += `</div>`;
+
+    document.getElementById('stats-breakdown').innerHTML = html;
 }
 
 // Helper Functions
-function toggleControlPanel() {
-    document.querySelector('.control-panel').classList.toggle('collapsed');
+function togglePOI() {
+    map.hasLayer(poiLayer) ? map.removeLayer(poiLayer) : map.addLayer(poiLayer);
+    map.hasLayer(baseLayer) ? map.removeLayer(baseLayer) : map.addLayer(baseLayer);
 }
 
 function createPopupContent(properties) {
-    let content = `<h4>${properties.category}</h4>`;
-    content += `<p><strong>District:</strong> ${properties.district}</p>`;
+    let content = `<h4>${properties.category}</h4>
+                  <p><strong>District:</strong> ${properties.district}</p>`;
     
     switch(properties.category) {
         case 'Acoustic Signals':
-            content += `<p><strong>Type:</strong> ${properties.type}</p>`;
-            content += `<p><strong>ID:</strong> ${properties.id}</p>`;
+            content += `<p><strong>Type:</strong> ${properties.type}</p>
+                       <p><strong>ID:</strong> ${properties.id}</p>`;
             break;
         case 'Streetlights':
-            content += `<p><strong>Type:</strong> ${properties.type}</p>`;
-            content += `<p><strong>Neighborhood:</strong> ${properties.neighborhood}</p>`;
-            content += `<p><strong>Address:</strong> ${properties.address}</p>`;
+            content += `<p><strong>Type:</strong> ${properties.type}</p>
+                       <p><strong>Neighborhood:</strong> ${properties.neighborhood}</p>
+                       <p><strong>Address:</strong> ${properties.address}</p>`;
             break;
         case 'Traffic Lights':
             content += `<p><strong>ID:</strong> ${properties.id}</p>`;
             break;
     }
-    
     return content;
 }
 
@@ -405,6 +347,10 @@ function showError(message) {
     errorDiv.textContent = message;
     document.body.appendChild(errorDiv);
     setTimeout(() => errorDiv.remove(), 5000);
+}
+
+function updateLoadingScreen(message) {
+    document.querySelector('.loading-status').textContent = message;
 }
 
 // Initialize Application

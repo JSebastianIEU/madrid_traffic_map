@@ -20,25 +20,27 @@
             <div class="dataset-status"></div>
         </div>
     </div>
-
+    <div class="poi-toggle">
+        <button onclick="togglePOI()">Toggle Points of Interest</button>
+    </div>
     <div id="map"></div>
-    <div class="control-panel">
-        <button class="toggle-panel" onclick="toggleControlPanel()">☰</button>
-        <div class="panel-content">
-            <div class="filter-group">
-                <h3>Categories</h3>
-                <div id="category-filters"></div>
-            </div>
-            <div class="filter-group">
-                <h3>Districts</h3>
-                <div class="district-list" id="district-filters"></div>
-            </div>
-            <div class="stats-container">
-                <h3>Statistics</h3>
-                <div class="stats-item" id="total-count"></div>
-                <div class="stats-grid" id="category-counts"></div>
-                <div class="stats-grid" id="district-counts"></div>
-            </div>
+    <div class="panel-content">
+        <div class="filter-group">
+            <h3>Categories</h3>
+            <div id="category-filters"></div>
+        </div>
+        <div class="filter-group">
+            <h3>Districts</h3>
+            <div id="district-filters"></div>
+        </div>
+        <div class="filter-group">
+            <h3>Neighborhoods</h3>
+            <div id="neighborhood-filters"></div>
+        </div>
+        <button class="apply-filters" onclick="applyFilters()">Apply Filters</button>
+        <div class="stats-container">
+            <h3>Statistics</h3>
+            <div id="stats-breakdown"></div>
         </div>
     </div>
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
