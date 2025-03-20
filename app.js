@@ -46,65 +46,56 @@ async function loadData() {
         
         for (const [category, file] of Object.entries(datasets)) {
             const url = `${CONFIG.BASE_URL}${file}`;
-            const response = await fetch(url);
+            console.log(`Fetching ${url}`);
             
-            if (!response.ok) {
-                throw new Error(`Failed to load ${file} (HTTP ${response.status})`);
-            }
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Failed to load ${file}: ${response.status}`);
             
             const csvData = await response.text();
+            console.log(`Received data for ${file}:`, csvData.slice(0, 200)); // Log first 200 chars
             
             const results = Papa.parse(csvData, {
                 header: true,
                 dynamicTyping: true,
-                skipEmptyLines: true,
-                error: (error) => {
-                    throw new Error(`CSV parse error in ${file}: ${error.message}`);
-                }
+                skipEmptyLines: true
             });
             
-            const features = results.data.map(row => {
-                // Handle different column structures
-                const baseProps = {
-                    category: category,
-                    district: row.district || 'Unknown'
-                };
+            console.log(`Parsed ${file}:`, results.data.slice(0, 3)); // Log first 3 rows
 
-                // Category-specific properties
-                const specificProps = {
-                    'Acoustic Signals': {
-                        type: row.type,
-                        id: row.id
-                    },
-                    'Streetlights': {
-                        type: row.type,
-                        neighborhood: row.neighborhood,
-                        address: row.address
-                    },
-                    'Traffic Lights': {
-                        id: row.id
-                    }
-                }[category];
+            const features = results.data.map(row => {
+                // Handle different coordinate column names
+                const lng = row.Longitude || row.longitude;
+                const lat = row.Latitude || row.latitude;
+                
+                if (!lng || !lat) {
+                    console.warn('Missing coordinates in row:', row);
+                    return null;
+                }
+
+                const props = {
+                    category: category,
+                    district: row.district || 'Unknown',
+                    neighborhood: row.neighborhood || 'Unknown',
+                    type: row.type || 'N/A',
+                    id: row.id || 'N/A',
+                    address: row.address || 'N/A'
+                };
 
                 return {
                     type: 'Feature',
                     geometry: {
                         type: 'Point',
-                        coordinates: [
-                            Number(row.Longitude || row.longitude),
-                            Number(row.Latitude || row.latitude)
-                        ]
+                        coordinates: [Number(lng), Number(lat)]
                     },
-                    properties: {
-                        ...baseProps,
-                        ...specificProps
-                    }
+                    properties: props
                 };
-            });
-            
+            }).filter(Boolean);
+
+            console.log(`Processed features for ${file}:`, features.slice(0, 3));
             allData.push(...features);
         }
 
+        console.log('All data loaded:', allData);
         loadMarkers(allData);
         initFilters(allData);
         updateStatistics();
@@ -143,14 +134,24 @@ function loadMarkers(data) {
 }
 // Filter System
 function initFilters(data) {
-    const categories = new Set(['Traffic Lights', 'Streetlights', 'Acoustic Signals']);
+    console.log('Initializing filters with data:', data);
+    
+    // Collect unique values
+    const categories = new Set(data.map(f => f.properties.category));
     const districts = new Set(data.map(f => f.properties.district));
     const neighborhoods = new Set(data.map(f => f.properties.neighborhood));
+
+    console.log('Filter options:', { categories, districts, neighborhoods });
 
     // Create filters
     const createFilters = (containerId, values, type) => {
         const container = document.getElementById(containerId);
-        values.forEach(value => container.appendChild(createCheckbox(value, type)));
+        container.innerHTML = '';
+        values.forEach(value => {
+            if (value && value !== 'Unknown') {
+                container.appendChild(createCheckbox(value, type));
+            }
+        });
     };
 
     createFilters('category-filters', categories, 'category');
@@ -162,10 +163,7 @@ function initFilters(data) {
     activeFilters.districts = new Set(districts);
     activeFilters.neighborhoods = new Set(neighborhoods);
 
-    // Add event listeners
-    document.querySelectorAll('.filter-item input').forEach(checkbox => {
-        checkbox.addEventListener('change', handleFilterChange);
-    });
+    console.log('Active filters initialized:', activeFilters);
 }
 
 function createCheckbox(value, type) {
@@ -207,15 +205,20 @@ function handleFilterChange() {
 }
 
 function updateVisibility() {
+    let visibleCount = 0;
+    
     markersCluster.eachLayer(marker => {
         const props = marker.feature.properties;
         const visible = activeFilters.categories.has(props.category) &&
                       activeFilters.districts.has(props.district) &&
                       activeFilters.neighborhoods.has(props.neighborhood);
         
+        if (visible) visibleCount++;
         marker.setOpacity(visible ? 1 : 0);
-        marker.setStyle({fillOpacity: visible ? 1 : 0});
+        marker.setStyle({ fillOpacity: visible ? 1 : 0 });
     });
+
+    console.log(`Visible markers: ${visibleCount}`);
 }
 
 // Statistics System
