@@ -10,6 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+    <!-- Loading Overlay -->
     <div class="loading-overlay active">
         <div class="loading-container">
             <div class="loading-spinner"></div>
@@ -20,32 +21,49 @@
             <div class="dataset-status"></div>
         </div>
     </div>
-    <div class="poi-toggle">
-        <button onclick="togglePOI()">Toggle Points of Interest</button>
+
+    <!-- Map Controls -->
+    <div class="map-controls">
+        <button class="toggle-panel">☰</button>
+        <div class="poi-toggle">
+            <button onclick="toggleStreetLabels()">Alternar nombres calles</button>
+            <button onclick="toggleDistrictLabels()">Alternar nombres distritos</button>
+        </div>
     </div>
+
+    <!-- Map Container -->
     <div id="map"></div>
-    <div class="panel-content">
-        <div class="filter-group">
-            <h3>Categories</h3>
-            <div id="category-filters"></div>
-        </div>
-        <div class="filter-group">
-            <h3>Districts</h3>
-            <div id="district-filters"></div>
-        </div>
-        <div class="filter-group">
-            <h3>Neighborhoods</h3>
-            <div id="neighborhood-filters"></div>
-        </div>
-        <button class="apply-filters" onclick="applyFilters()">Apply Filters</button>
-        <div class="stats-container">
-            <h3>Statistics</h3>
-            <div id="stats-breakdown"></div>
+
+    <!-- Control Panel -->
+    <div class="control-panel">
+        <div class="panel-content">
+            <div class="filter-group">
+                <h3>Categorías</h3>
+                <div id="category-filters"></div>
+            </div>
+            <div class="filter-group">
+                <h3>Distritos</h3>
+                <div id="district-filters"></div>
+            </div>
+            <button class="apply-filters" onclick="applyFilters()">Aplicar Filtros</button>
+            <div class="stats-container">
+                <h3>Estadísticas</h3>
+                <div id="stats-breakdown"></div>
+            </div>
         </div>
     </div>
+
+    <!-- Scripts -->
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="app.js"></script>
+
+    <!-- Inline Script for Panel Toggle -->
+    <script>
+        document.querySelector('.toggle-panel').addEventListener('click', () => {
+            document.querySelector('.control-panel').classList.toggle('collapsed');
+        });
+    </script>
 </body>
 </html>

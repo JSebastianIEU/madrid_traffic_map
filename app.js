@@ -9,271 +9,283 @@ const CONFIG = {
         'Traffic Lights': '#ff4757',
         'Streetlights': '#ffa502',
         'Acoustic Signals': '#6c5ce7'
-    }
+    },
+    DATASETS: [
+        { 
+            name: 'Traffic Lights',
+            file: 'trafic.csv',
+            color: '#ff4757',
+            coordFields: ['Longitude', 'Latitude']
+        },
+        {
+            name: 'Streetlights',
+            file: 'lamps.csv',
+            color: '#ffa502',
+            coordFields: ['Longitude', 'Latitude']
+        },
+        {
+            name: 'Acoustic Signals',
+            file: 'acustic.csv',
+            color: '#6c5ce7',
+            coordFields: ['Longitude', 'Latitude']
+        }
+    ]
 };
 
 // State
 let map;
 let markersCluster;
-let baseLayer, poiLayer;
 let activeFilters = {
     categories: new Set(),
-    districts: new Set(),
-    neighborhoods: new Set()
+    districts: new Set()
 };
 let loadingState = {
     total: 0,
     loaded: 0,
     currentDataset: ''
 };
+let streetLabelsLayer;
 
-// Loading Screen Functions
+// Madrid District Structure
+const MADRID_STRUCTURE = {
+    districts: {
+        1: 'Centro', 2: 'Arganzuela', 3: 'Retiro', 4: 'Salamanca', 5: 'Chamartín',
+        6: 'Tetuán', 7: 'Chamberí', 8: 'Fuencarral-El Pardo', 9: 'Moncloa',
+        10: 'Latina', 11: 'Carabanchel', 12: 'Usera', 13: 'Puente de Vallecas',
+        14: 'Moratalaz', 15: 'Ciudad Lineal', 16: 'Hortaleza', 17: 'Villaverde',
+        18: 'Villa de Vallecas', 19: 'Vicálvaro', 20: 'San Blas', 21: 'Barajas'
+    }
+};
+
+const DISTRICT_MAPPING = {
+    'HORTALEZA': 'Hortaleza',
+    'Moncloa': 'Moncloa-Aravaca',
+    'CARABANCHEL': 'Carabanchel',
+    'PUENTE VALLEKAS': 'Puente de Vallecas',
+    'FUENCARRAL': 'Fuencarral-El Pardo'
+};
+
+// Normalize district names
+function normalizeDistrict(name) {
+    if (!name) return 'Desconocido';
+    const officialName = Object.values(MADRID_STRUCTURE.districts)
+        .find(d => d.toLowerCase() === name.trim().toLowerCase());
+    return officialName || DISTRICT_MAPPING[name.trim().toUpperCase()] || 'Desconocido';
+}
+
+// Loading functions
 function updateLoadingScreen(message) {
     const loadingStatus = document.querySelector('.loading-status');
-    if (loadingStatus) {
-        loadingStatus.textContent = message;
-    }
+    if (loadingStatus) loadingStatus.textContent = message;
 }
 
-function updateLoadingState() {
-    const progress = (loadingState.loaded / loadingState.total) * 100 || 0;
+function updateProgress() {
     const progressBar = document.querySelector('.progress-bar');
-    const datasetStatus = document.querySelector('.dataset-status');
-    
     if (progressBar) {
+        const progress = (loadingState.loaded / loadingState.total) * 100 || 0;
         progressBar.style.width = `${progress}%`;
     }
-    
-    if (datasetStatus) {
-        datasetStatus.textContent = `Loading ${loadingState.currentDataset}: ${loadingState.loaded}/${loadingState.total}`;
+}
+
+// Coordinate parsing
+function parseCoordinates(row, dataset) {
+    try {
+        const lngField = dataset.coordFields[0];
+        const latField = dataset.coordFields[1];
+        const lng = parseFloat(row[lngField]);
+        const lat = parseFloat(row[latField]);
+
+        if (isNaN(lng) || isNaN(lat)) {
+            console.warn('Coordenadas inválidas:', row);
+            return null;
+        }
+
+        if (lng < -4.35 || lng > -3.1 || lat < 40.15 || lat > 40.65) {
+            console.warn('Coordenadas fuera de rango:', lng, lat);
+            return null;
+        }
+
+        return [lng, lat];
+    } catch (error) {
+        console.error('Error procesando coordenadas:', error);
+        return null;
     }
 }
 
-// Map Initialization
+// Map initialization
 async function initMap() {
     try {
-        console.log("Inicializando mapa...");
-        updateLoadingScreen('Initializing map...');
+        updateLoadingScreen('Inicializando mapa...');
         
-        // Verificar que Leaflet está cargado
-        if (!L || !L.map) {
-            throw new Error("Leaflet no se cargó correctamente");
-        }
-
         map = L.map('map', {
             maxZoom: CONFIG.MAX_ZOOM,
             minZoom: 12
         }).setView([40.4168, -3.7038], CONFIG.INITIAL_ZOOM);
 
-        console.log("Mapa creado, añadiendo capas...");
-        
-        // Capa base
-        baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        // Capa de POIs
-        poiLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+        streetLabelsLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png');
         
-        // Cluster de marcadores
         markersCluster = L.markerClusterGroup({
             chunkedLoading: true,
             chunkInterval: 100
         });
         map.addLayer(markersCluster);
 
-        console.log("Mapa inicializado correctamente");
     } catch (error) {
-        console.error("Error en initMap:", error);
         showError(`Error al inicializar el mapa: ${error.message}`);
-        throw error; // Propagar el error
+        document.querySelector('.loading-overlay').classList.add('hidden');
     }
 }
 
-// Data Loading
+// Data loading
 async function loadData() {
     try {
-        const datasets = [
-            { 
-                name: 'Traffic Lights',
-                file: 'trafic.csv',
-                color: CONFIG.COLORS['Traffic Lights']
-            },
-            {
-                name: 'Streetlights',
-                file: 'lamps.csv',
-                color: CONFIG.COLORS['Streetlights']
-            },
-            {
-                name: 'Acoustic Signals',
-                file: 'acustic.csv',
-                color: CONFIG.COLORS['Acoustic Signals']
-            }
-        ];
-
-        for (const dataset of datasets) {
+        loadingState.total = CONFIG.DATASETS.reduce((acc, dataset) => acc + 5000, 0);
+        
+        for (const dataset of CONFIG.DATASETS) {
             loadingState.currentDataset = dataset.name;
-            updateLoadingScreen(`Loading ${dataset.name} data...`);
+            updateLoadingScreen(`Cargando ${dataset.name}...`);
             
-            const url = `${CONFIG.BASE_URL}${dataset.file}`;
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`Failed to load ${dataset.file}`);
-            
+            const response = await fetch(`${CONFIG.BASE_URL}${dataset.file}`);
             const csvData = await response.text();
+            
             const results = Papa.parse(csvData, {
                 header: true,
                 dynamicTyping: true,
-                skipEmptyLines: true
+                skipEmptyLines: true,
+                worker: false,
+                fastMode: false
             });
 
             loadingState.total = results.data.length;
             loadingState.loaded = 0;
-            updateLoadingState();
-
-            const features = [];
+            
+            const validFeatures = [];
             for (const row of results.data) {
-                const coords = parseCoordinates(row, dataset);
-                if (!coords) continue;
+                try {
+                    const coords = parseCoordinates(row, dataset);
+                    if (!coords) continue;
 
-                features.push({
-                    type: 'Feature',
-                    geometry: {
-                        type: 'Point',
-                        coordinates: coords
-                    },
-                    properties: {
-                        category: dataset.name,
-                        district: row.district || 'Unknown',
-                        neighborhood: dataset.name === 'Streetlights' ? row.neighborhood : 'N/A',
-                        type: row.type || 'N/A',
-                        id: row.id || 'N/A',
-                        address: dataset.name === 'Streetlights' ? row.address : 'N/A'
-                    }
-                });
-                loadingState.loaded++;
-                if (features.length % 100 === 0) updateLoadingState();
+                    validFeatures.push({
+                        type: 'Feature',
+                        geometry: { type: 'Point', coordinates: coords },
+                        properties: {
+                            category: dataset.name,
+                            district: normalizeDistrict(row.district),
+                            type: row.type || 'N/A',
+                            id: row.id || 'N/A',
+                            address: row.address || 'N/A'
+                        }
+                    });
+
+                    loadingState.loaded++;
+                    if (loadingState.loaded % 100 === 0) updateProgress();
+
+                } catch (error) {
+                    console.warn('Error procesando fila:', row, error);
+                }
             }
-
-            await addMarkersInBatches(features, dataset.color);
+            
+            await addMarkersInBatches(validFeatures, dataset.color);
         }
 
+        document.querySelector('.loading-overlay').classList.add('hidden');
         initFilters();
         updateStatistics();
+
+    } catch (error) {
+        showError(`Error cargando datos: ${error.message}`);
         document.querySelector('.loading-overlay').classList.add('hidden');
-    } catch (error) {
-        showError(error.message);
-        console.error('Error:', error);
     }
 }
 
-// Coordinate Parsing
-function parseCoordinates(row, dataset) {
-    try {
-        let lng, lat;
-        if (dataset.name === 'Streetlights') {
-            lat = parseFloat(row.Latitude);
-            lng = parseFloat(row.Longitude);
-        } else {
-            lng = parseFloat(row.Longitude);
-            lat = parseFloat(row.Latitude);
-        }
-
-        if (isNaN(lng)) lng = parseFloat(String(row.Longitude).replace(',', '.'));
-        if (isNaN(lat)) lat = parseFloat(String(row.Latitude).replace(',', '.'));
-
-        if (isNaN(lng) || isNaN(lat)) return null;
-        return [lng, lat];
-    } catch (error) {
-        console.warn('Coordinate error:', error);
-        return null;
-    }
-}
-
-// Marker Creation
+// Batch processing
 async function addMarkersInBatches(features, color) {
     const batchSize = CONFIG.BATCH_SIZE;
+    
     for (let i = 0; i < features.length; i += batchSize) {
         const batch = features.slice(i, i + batchSize);
-        const markers = batch.map(feature => 
-            L.circleMarker(feature.geometry.coordinates, {
-                radius: 5,
-                color: color,
-                fillColor: color,
-                fillOpacity: 0.7
-            }).bindPopup(createPopupContent(feature.properties))
-        );
-        
+        const markers = batch.map(feature => createMarker(feature, color));
         markersCluster.addLayers(markers);
         await new Promise(resolve => setTimeout(resolve, CONFIG.BATCH_DELAY));
     }
 }
 
-// Filter System
-function initFilters() {
-    const districtNeighborhoods = {};
-    markersCluster.eachLayer(marker => {
-        const { district, neighborhood } = marker.feature.properties;
-        if (!districtNeighborhoods[district]) districtNeighborhoods[district] = new Set();
-        districtNeighborhoods[district].add(neighborhood);
-    });
-
-    populateFilters('district-filters', Object.keys(districtNeighborhoods), 'district', updateNeighborhoodFilters);
-    updateNeighborhoodFilters();
-    populateFilters('category-filters', ['Traffic Lights', 'Streetlights', 'Acoustic Signals'], 'category');
-}
-
-function updateNeighborhoodFilters() {
-    const selectedDistricts = Array.from(document.querySelectorAll('[data-district]:checked'))
-        .map(cb => cb.dataset.district);
+// Marker creation
+function createMarker(feature, color) {
+    const marker = L.circleMarker(feature.geometry.coordinates, {
+        radius: 6,
+        color: color,
+        fillColor: color,
+        fillOpacity: 0.7,
+        properties: feature.properties
+    }).bindPopup(createPopupContent(feature.properties));
     
-    const availableNeighborhoods = new Set();
-    selectedDistricts.forEach(district => {
-        markersCluster.eachLayer(marker => {
-            if (marker.feature.properties.district === district) {
-                availableNeighborhoods.add(marker.feature.properties.neighborhood);
-            }
-        });
+    marker.on('mouseover', function() { this.openPopup(); });
+    marker.on('mouseout', function() { this.closePopup(); });
+    
+    return marker;
+}
+
+// Filter system
+function initFilters() {
+    // Category filters
+    const categoryContainer = document.getElementById('category-filters');
+    categoryContainer.innerHTML = Object.keys(CONFIG.COLORS).map(category => `
+        <div class="filter-item">
+            <label>
+                <input type="checkbox" data-category="${category}" checked>
+                ${category}
+            </label>
+        </div>
+    `).join('');
+
+    // District filters
+    const districtContainer = document.getElementById('district-filters');
+    districtContainer.innerHTML = Object.values(MADRID_STRUCTURE.districts).map(district => `
+        <div class="filter-item">
+            <label>
+                <input type="checkbox" data-district="${district}" checked>
+                ${district}
+            </label>
+        </div>
+    `).join('');
+
+    // Initialize filters
+    activeFilters.categories = new Set(Object.keys(CONFIG.COLORS));
+    activeFilters.districts = new Set(Object.values(MADRID_STRUCTURE.districts));
+
+    // Panel toggle
+    document.querySelector('.toggle-panel').addEventListener('click', () => {
+        document.querySelector('.control-panel').classList.toggle('collapsed');
     });
-
-    populateFilters('neighborhood-filters', Array.from(availableNeighborhoods), 'neighborhood');
 }
 
-function populateFilters(containerId, values, type) {
-    const container = document.getElementById(containerId);
-    container.innerHTML = values
-        .filter(v => v && v !== 'Unknown')
-        .map(value => `
-            <div class="filter-item">
-                <label>
-                    <input type="checkbox" data-${type}="${value}" checked>
-                    ${value}
-                </label>
-            </div>
-        `).join('');
-}
-
-// Filter Application
+// Apply filters
 function applyFilters() {
-    activeFilters = {
-        categories: new Set(Array.from(document.querySelectorAll('[data-category]:checked'))
-            .map(cb => cb.dataset.category)),
-        districts: new Set(Array.from(document.querySelectorAll('[data-district]:checked'))
-            .map(cb => cb.dataset.district)),
-        neighborhoods: new Set(Array.from(document.querySelectorAll('[data-neighborhood]:checked'))
-            .map(cb => cb.dataset.neighborhood))
-    };
+    activeFilters.categories = new Set(
+        Array.from(document.querySelectorAll('[data-category]:checked'))
+            .map(cb => cb.dataset.category)
+    );
+    
+    activeFilters.districts = new Set(
+        Array.from(document.querySelectorAll('[data-district]:checked'))
+            .map(cb => cb.dataset.district)
+    );
 
     updateVisibility();
     updateStatistics();
 }
 
-// Visibility Update
+// Update visibility
 function updateVisibility() {
     markersCluster.eachLayer(marker => {
-        const { category, district, neighborhood } = marker.feature.properties;
-        const visible = activeFilters.categories.has(category) &&
-                      activeFilters.districts.has(district) &&
-                      activeFilters.neighborhoods.has(neighborhood);
+        const props = marker.options.properties;
+        const visible = activeFilters.categories.has(props.category) &&
+                      activeFilters.districts.has(props.district);
         
         marker.setStyle({
             opacity: visible ? 1 : 0,
@@ -282,102 +294,83 @@ function updateVisibility() {
     });
 }
 
-// Statistics System
+// Statistics
 function updateStatistics() {
     const stats = {
-        totals: { 'Traffic Lights': 0, 'Streetlights': 0, 'Acoustic Signals': 0 },
-        districts: {},
-        neighborhoods: {}
+        totals: { categories: {}, districts: {} },
+        breakdown: {}
     };
 
     markersCluster.eachLayer(marker => {
-        if (marker.options.opacity !== 1) return;
-        const { category, district, neighborhood } = marker.feature.properties;
+        if (marker.options.opacity === 0) return;
+        const { category, district } = marker.options.properties;
         
-        // Update totals
-        stats.totals[category]++;
+        // Totals
+        stats.totals.categories[category] = (stats.totals.categories[category] || 0) + 1;
+        stats.totals.districts[district] = (stats.totals.districts[district] || 0) + 1;
         
-        // District stats
-        if (!stats.districts[district]) {
-            stats.districts[district] = { total: 0, ...stats.totals };
+        // Breakdown
+        if (!stats.breakdown[district]) {
+            stats.breakdown[district] = {
+                total: 0,
+                categories: {}
+            };
         }
-        stats.districts[district].total++;
-        stats.districts[district][category]++;
-        
-        // Neighborhood stats
-        if (!stats.neighborhoods[neighborhood]) {
-            stats.neighborhoods[neighborhood] = { total: 0, ...stats.totals };
-        }
-        stats.neighborhoods[neighborhood].total++;
-        stats.neighborhoods[neighborhood][category]++;
+        stats.breakdown[district].total++;
+        stats.breakdown[district].categories[category] = 
+            (stats.breakdown[district].categories[category] || 0) + 1;
     });
 
     updateStatsDisplay(stats);
 }
 
 function updateStatsDisplay(stats) {
-    const total = Object.values(stats.totals).reduce((a, b) => a + b, 0);
-    let html = `
-        <div class="stats-summary">
-            <h4>Total Selected: ${total}</h4>
-            <div class="stats-grid">
-                ${Object.entries(stats.totals).map(([cat, count]) => `
-                    <div class="stat-item" style="border-left: 4px solid ${CONFIG.COLORS[cat]}">
-                        <span>${cat}</span>
+    let html = `<div class="stats-section">
+                    <h3>Resumen General</h3>
+                    <div class="stats-grid">`;
+    
+    // Category totals
+    Object.entries(stats.totals.categories).forEach(([category, count]) => {
+        html += `<div class="stat-item" style="border-left: 4px solid ${CONFIG.COLORS[category]}">
+                    <span>${category}</span>
+                    <span>${count}</span>
+                 </div>`;
+    });
+    
+    html += `</div></div><div class="stats-section"><h3>Por Distrito</h3>`;
+    
+    // District breakdown
+    Object.entries(stats.breakdown).forEach(([district, data]) => {
+        html += `<div class="district-group">
+                    <h4>${district} (${data.total})</h4>
+                    <div class="stats-grid">`;
+        
+        Object.entries(data.categories).forEach(([category, count]) => {
+            html += `<div class="stat-item">
+                        <span>${category}</span>
                         <span>${count}</span>
-                    </div>
-                `).join('')}
-            </div>
-        </div>`;
-
-    html += `<div class="district-breakdown">`;
-    for (const [district, data] of Object.entries(stats.districts)) {
-        html += `
-            <div class="district-group">
-                <h4>${district}</h4>
-                <div class="stats-grid">
-                    ${Object.entries(CONFIG.COLORS).map(([cat]) => `
-                        <div class="stat-item">
-                            <span>${cat}</span>
-                            <span>${data[cat] || 0}</span>
-                        </div>
-                    `).join('')}
-                </div>
-                <div class="total">Total: ${data.total}</div>
-            </div>`;
-    }
+                     </div>`;
+        });
+        
+        html += `</div></div>`;
+    });
+    
     html += `</div>`;
-
     document.getElementById('stats-breakdown').innerHTML = html;
 }
 
-// Helper Functions
-function togglePOI() {
-    map.hasLayer(poiLayer) ? map.removeLayer(poiLayer) : map.addLayer(poiLayer);
-    map.hasLayer(baseLayer) ? map.removeLayer(baseLayer) : map.addLayer(baseLayer);
-}
-
+// Popup content
 function createPopupContent(properties) {
-    let content = `<h4>${properties.category}</h4>
-                  <p><strong>District:</strong> ${properties.district}</p>`;
-    
-    switch(properties.category) {
-        case 'Acoustic Signals':
-            content += `<p><strong>Type:</strong> ${properties.type}</p>
-                       <p><strong>ID:</strong> ${properties.id}</p>`;
-            break;
-        case 'Streetlights':
-            content += `<p><strong>Type:</strong> ${properties.type}</p>
-                       <p><strong>Neighborhood:</strong> ${properties.neighborhood}</p>
-                       <p><strong>Address:</strong> ${properties.address}</p>`;
-            break;
-        case 'Traffic Lights':
-            content += `<p><strong>ID:</strong> ${properties.id}</p>`;
-            break;
-    }
-    return content;
+    return `<div class="popup-header" style="border-left: 4px solid ${CONFIG.COLORS[properties.category]}">
+                <h4>${properties.category}</h4>
+                <p><strong>Distrito:</strong> ${properties.district}</p>
+                <p><strong>Tipo:</strong> ${properties.type}</p>
+                ${properties.address !== 'N/A' ? `<p><strong>Dirección:</strong> ${properties.address}</p>` : ''}
+                <p><strong>ID:</strong> ${properties.id}</p>
+            </div>`;
 }
 
+// Helpers
 function showError(message) {
     const errorDiv = document.createElement('div');
     errorDiv.className = 'error-message';
@@ -386,19 +379,17 @@ function showError(message) {
     setTimeout(() => errorDiv.remove(), 5000);
 }
 
-function updateLoadingScreen(message) {
-    document.querySelector('.loading-status').textContent = message;
+// Label toggles
+function toggleStreetLabels() {
+    if (map.hasLayer(streetLabelsLayer)) {
+        map.removeLayer(streetLabelsLayer);
+    } else {
+        streetLabelsLayer.addTo(map);
+    }
 }
 
-// Initialize Application
+// Initialization
 document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        await initMap();
-        console.log("Mapa inicializado, cargando datos...");
-        await loadData();
-    } catch (error) {
-        console.error("Error crítico:", error);
-        showError("La aplicación no pudo iniciar. Recarga la página.");
-        document.querySelector('.loading-overlay').classList.add('hidden');
-    }
+    await initMap();
+    await loadData();
 });
