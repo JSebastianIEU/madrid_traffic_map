@@ -4,13 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Madrid Infrastructure Map</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css">
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Loading Overlay -->
     <div class="loading-overlay active">
         <div class="loading-container">
             <div class="loading-spinner"></div>
@@ -18,52 +17,40 @@
             <div class="loading-progress">
                 <div class="progress-bar"></div>
             </div>
-            <div class="dataset-status"></div>
         </div>
     </div>
 
-    <!-- Map Controls -->
     <div class="map-controls">
-        <button class="toggle-panel">☰</button>
+        <button class="toggle-panel" onclick="document.querySelector('.control-panel').classList.toggle('collapsed')">☰</button>
         <div class="poi-toggle">
-            <button onclick="toggleStreetLabels()">Alternar nombres calles</button>
-            <button onclick="toggleDistrictLabels()">Alternar nombres distritos</button>
+            <button onclick="toggleStreetLabels()">Toggle Street Names</button>
+            <button onclick="toggleDistrictLabels()">Toggle District Labels</button>
         </div>
     </div>
 
-    <!-- Map Container -->
     <div id="map"></div>
 
-    <!-- Control Panel -->
     <div class="control-panel">
         <div class="panel-content">
             <div class="filter-group">
-                <h3>Categorías</h3>
+                <h3>Categories</h3>
                 <div id="category-filters"></div>
             </div>
             <div class="filter-group">
-                <h3>Distritos</h3>
+                <h3>Districts</h3>
                 <div id="district-filters"></div>
             </div>
-            <button class="apply-filters" onclick="applyFilters()">Aplicar Filtros</button>
+            <button class="apply-filters" onclick="applyFilters()">Apply Filters</button>
             <div class="stats-container">
-                <h3>Estadísticas</h3>
+                <h3>Statistics</h3>
                 <div id="stats-breakdown"></div>
             </div>
         </div>
     </div>
 
-    <!-- Scripts -->
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="app.js"></script>
-
-    <!-- Inline Script for Panel Toggle -->
-    <script>
-        document.querySelector('.toggle-panel').addEventListener('click', () => {
-            document.querySelector('.control-panel').classList.toggle('collapsed');
-        });
-    </script>
 </body>
 </html>
